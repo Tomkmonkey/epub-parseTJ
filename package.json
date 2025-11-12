@@ -1,7 +1,7 @@
 {
   "name": "epub-parser-service",
   "version": "1.0.0",
-  "description": "EPUB解析服务（Vercel部署）",
+  "description": "EPUB解析服务",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
