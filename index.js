@@ -1,24 +1,22 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const Epub = require('epub2'); // 使用 epub2 库
+const Epub = require('node-epub'); // 导入 node-epub
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 跨域配置
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type']
 }));
 
-// 文件上传配置（Vercel 兼容）
 const upload = multer({
-  dest: '/tmp/', // 临时目录
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB 限制
+  dest: '/tmp/',
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.originalname.endsWith('.epub')) {
       cb(null, true);
@@ -28,7 +26,6 @@ const upload = multer({
   }
 });
 
-// 健康检查接口
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'success',
@@ -37,7 +34,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// 核心解析接口（使用 epub2 库）
 app.post('/parse-epub', upload.single('epubFile'), async (req, res) => {
   try {
     if (!req.file) {
@@ -47,13 +43,10 @@ app.post('/parse-epub', upload.single('epubFile'), async (req, res) => {
       });
     }
 
-    // 使用 epub2 解析逻辑
+    // 使用 node-epub 解析（返回 Promise）
     const book = new Epub(req.file.path);
-    const bookData = await new Promise((resolve, reject) => {
-      book.on('end', () => resolve(book)); // 解析完成回调
-      book.on('error', (err) => reject(err)); // 错误回调
-      book.parse(); // 开始解析
-    });
+    const metadata = await book.getMetadata(); // 获取元数据
+    const chapters = await book.getChapters(); // 获取章节
 
     // 删除临时文件
     try {
@@ -62,29 +55,27 @@ app.post('/parse-epub', upload.single('epubFile'), async (req, res) => {
       console.warn('临时文件删除失败：', unlinkErr.message);
     }
 
-    // 提取章节信息
-    const chapters = bookData.flow.map((chapter, index) => ({
+    // 格式化章节信息
+    const formattedChapters = chapters.map((chapter, index) => ({
       chapterIndex: index + 1,
       title: chapter.title || `第 ${index + 1} 章`,
-      id: chapter.id,
-      contentPreview: chapter.content 
+      contentPreview: chapter.content
         ? chapter.content.replace(/<[^>]+>/g, '').substring(0, 300) + '...'
         : '无内容'
     }));
 
-    // 返回结果
     res.status(200).json({
       code: 200,
       message: '解析成功',
       data: {
         bookMeta: {
-          title: bookData.metadata.title || '未知标题',
-          author: bookData.metadata.creator || '未知作者',
-          publisher: bookData.metadata.publisher || '未知出版社',
-          date: bookData.metadata.date || '未知日期'
+          title: metadata.title || '未知标题',
+          author: metadata.creator || '未知作者',
+          publisher: metadata.publisher || '未知出版社',
+          date: metadata.date || '未知日期'
         },
-        chapterCount: chapters.length,
-        chapters: chapters
+        chapterCount: formattedChapters.length,
+        chapters: formattedChapters
       }
     });
 
@@ -99,7 +90,6 @@ app.post('/parse-epub', upload.single('epubFile'), async (req, res) => {
   }
 });
 
-// 404 处理
 app.use((req, res) => {
   res.status(404).json({
     code: 404,
@@ -111,7 +101,6 @@ app.use((req, res) => {
   });
 });
 
-// 启动服务
 app.listen(PORT, () => {
   console.log(`服务运行在端口 ${PORT}`);
 });
