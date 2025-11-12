@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const Epub = require('node-epub'); // 导入 node-epub
+const Epub = require('epub'); // 导入 epub 库
 const fs = require('fs');
 const path = require('path');
 
@@ -43,10 +43,13 @@ app.post('/parse-epub', upload.single('epubFile'), async (req, res) => {
       });
     }
 
-    // 使用 node-epub 解析（返回 Promise）
+    // 使用 epub 库解析（基于回调，封装为 Promise）
     const book = new Epub(req.file.path);
-    const metadata = await book.getMetadata(); // 获取元数据
-    const chapters = await book.getChapters(); // 获取章节
+    const bookData = await new Promise((resolve, reject) => {
+      book.on('end', () => resolve(book)); // 解析完成
+      book.on('error', (err) => reject(err)); // 错误处理
+      book.parse(); // 开始解析
+    });
 
     // 删除临时文件
     try {
@@ -55,11 +58,12 @@ app.post('/parse-epub', upload.single('epubFile'), async (req, res) => {
       console.warn('临时文件删除失败：', unlinkErr.message);
     }
 
-    // 格式化章节信息
-    const formattedChapters = chapters.map((chapter, index) => ({
+    // 提取章节信息（适配 epub 库的结构）
+    const chapters = bookData.flow.map((chapter, index) => ({
       chapterIndex: index + 1,
       title: chapter.title || `第 ${index + 1} 章`,
-      contentPreview: chapter.content
+      id: chapter.id,
+      contentPreview: chapter.content 
         ? chapter.content.replace(/<[^>]+>/g, '').substring(0, 300) + '...'
         : '无内容'
     }));
@@ -69,13 +73,13 @@ app.post('/parse-epub', upload.single('epubFile'), async (req, res) => {
       message: '解析成功',
       data: {
         bookMeta: {
-          title: metadata.title || '未知标题',
-          author: metadata.creator || '未知作者',
-          publisher: metadata.publisher || '未知出版社',
-          date: metadata.date || '未知日期'
+          title: bookData.metadata.title || '未知标题',
+          author: bookData.metadata.creator || '未知作者',
+          publisher: bookData.metadata.publisher || '未知出版社',
+          date: bookData.metadata.date || '未知日期'
         },
-        chapterCount: formattedChapters.length,
-        chapters: formattedChapters
+        chapterCount: chapters.length,
+        chapters: chapters
       }
     });
 
@@ -96,7 +100,7 @@ app.use((req, res) => {
     error: '接口不存在',
     availableEndpoints: {
       'GET /health': '健康检查',
-      'POST /parse-epub': '上传 EPUB 解析（参数：epubFile）'
+      'POST /parse-epub': '上传 EPUB 解析'
     }
   });
 });
