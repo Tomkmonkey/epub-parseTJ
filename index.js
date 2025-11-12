@@ -1,91 +1,87 @@
-// 引入核心依赖（已修正 epub-parse 导入方式）
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const { parse: EpubParse } = require('epub-parse'); // 关键：使用命名导出的 parse 方法
+const Epub = require('epub2'); // 使用 epub2 库
 const fs = require('fs');
 const path = require('path');
 
-// 初始化 Express 应用
 const app = express();
-// 适配 Vercel 动态端口（必须使用环境变量）
 const PORT = process.env.PORT || 3000;
 
-// 跨域配置（允许所有来源，适合公开服务）
+// 跨域配置
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type']
 }));
 
-// 配置文件上传（适配 Vercel 只读文件系统）
+// 文件上传配置（Vercel 兼容）
 const upload = multer({
-  dest: '/tmp/', // 唯一可写入的临时目录
-  limits: { fileSize: 10 * 1024 * 1024 }, // 限制 10MB 以内的文件（Vercel 免费版限制）
+  dest: '/tmp/', // 临时目录
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB 限制
   fileFilter: (req, file, cb) => {
-    // 仅允许 EPUB 格式（.epub 后缀或对应 MIME 类型）
-    if (file.originalname.endsWith('.epub') || file.mimetype === 'application/epub+zip') {
+    if (file.originalname.endsWith('.epub')) {
       cb(null, true);
     } else {
-      cb(new Error('仅支持 .epub 格式文件'), false);
+      cb(new Error('仅支持 .epub 格式'), false);
     }
   }
 });
 
-// 健康检查接口（快速验证服务状态）
+// 健康检查接口
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'success',
     message: 'EPUB 解析服务运行正常',
-    timestamp: new Date().toISOString(),
-    endpoint: 'POST /parse-epub（上传 EPUB 文件）'
+    timestamp: new Date().toISOString()
   });
 });
 
-// 核心接口：解析 EPUB 文件
+// 核心解析接口（使用 epub2 库）
 app.post('/parse-epub', upload.single('epubFile'), async (req, res) => {
   try {
-    // 1. 验证文件是否上传
     if (!req.file) {
       return res.status(400).json({
         code: 400,
-        error: '未检测到文件，请上传 EPUB 格式文件'
+        error: '请上传 EPUB 文件'
       });
     }
 
-    // 2. 解析 EPUB（使用修正后的方法）
-    const book = await EpubParse(req.file.path);
+    // 使用 epub2 解析逻辑
+    const book = new Epub(req.file.path);
+    const bookData = await new Promise((resolve, reject) => {
+      book.on('end', () => resolve(book)); // 解析完成回调
+      book.on('error', (err) => reject(err)); // 错误回调
+      book.parse(); // 开始解析
+    });
 
-    // 3. 解析完成后删除临时文件（避免占用空间）
+    // 删除临时文件
     try {
       fs.unlinkSync(req.file.path);
     } catch (unlinkErr) {
-      console.warn('临时文件删除失败（不影响结果）：', unlinkErr.message);
+      console.warn('临时文件删除失败：', unlinkErr.message);
     }
 
-    // 4. 提取并格式化章节信息（过滤空内容，去除 HTML 标签）
-    const chapters = book.sections
-      .filter(section => section.content && section.content.trim() !== '')
-      .map((section, index) => ({
-        chapterIndex: index + 1,
-        title: section.title || `第 ${index + 1} 章（无标题）`,
-        contentPreview: section.content
-          .replace(/<[^>]+>/g, '') // 移除 HTML 标签
-          .substring(0, 300) + (section.content.length > 300 ? '...' : ''),
-        rawContentLength: section.content.length
-      }));
+    // 提取章节信息
+    const chapters = bookData.flow.map((chapter, index) => ({
+      chapterIndex: index + 1,
+      title: chapter.title || `第 ${index + 1} 章`,
+      id: chapter.id,
+      contentPreview: chapter.content 
+        ? chapter.content.replace(/<[^>]+>/g, '').substring(0, 300) + '...'
+        : '无内容'
+    }));
 
-    // 5. 返回成功响应
+    // 返回结果
     res.status(200).json({
       code: 200,
       message: '解析成功',
       data: {
         bookMeta: {
-          title: book.metadata.title || '未知标题',
-          author: book.metadata.creator || '未知作者',
-          publisher: book.metadata.publisher || '未知出版社',
-          publishDate: book.metadata.date || '未知日期',
-          language: book.metadata.language || '未知语言'
+          title: bookData.metadata.title || '未知标题',
+          author: bookData.metadata.creator || '未知作者',
+          publisher: bookData.metadata.publisher || '未知出版社',
+          date: bookData.metadata.date || '未知日期'
         },
         chapterCount: chapters.length,
         chapters: chapters
@@ -93,34 +89,31 @@ app.post('/parse-epub', upload.single('epubFile'), async (req, res) => {
     });
 
   } catch (error) {
-    // 统一错误处理（返回具体原因便于排查）
-    console.error('解析失败:', error.stack);
+    console.error('解析失败：', error.message);
     res.status(500).json({
       code: 500,
       error: '解析失败',
       detail: error.message,
-      tip: '请检查文件是否为 valid EPUB 格式，或尝试较小的文件'
+      tip: '请确认文件是有效的 EPUB 格式'
     });
   }
 });
 
-// 404 处理（未匹配的路由）
+// 404 处理
 app.use((req, res) => {
   res.status(404).json({
     code: 404,
     error: '接口不存在',
     availableEndpoints: {
-      'GET /health': '服务健康检查',
-      'POST /parse-epub': '上传 EPUB 文件并解析（参数名：epubFile）'
+      'GET /health': '健康检查',
+      'POST /parse-epub': '上传 EPUB 解析（参数：epubFile）'
     }
   });
 });
 
-// 启动服务（Vercel 会自动管理，本地测试用）
+// 启动服务
 app.listen(PORT, () => {
-  console.log(`服务已启动，端口：${PORT}`);
-  console.log(`健康检查：http://localhost:${PORT}/health`);
+  console.log(`服务运行在端口 ${PORT}`);
 });
 
-// 导出 app 供 Vercel Serverless 识别（必须）
 module.exports = app;

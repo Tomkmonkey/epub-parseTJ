@@ -1,23 +1,12 @@
 {
   "name": "epub-parser-service",
   "version": "1.0.0",
-  "description": "在线 EPUB 解析服务（适配 Vercel 部署）",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
   "dependencies": {
     "express": "^4.19.2",
     "cors": "^2.8.5",
     "multer": "^1.4.5-lts.1",
-    "epub-parse": "^1.0.4",
+    "epub2": "^0.1.11", // 新增此依赖
     "source-map-support": "^0.5.21"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.4"
-  },
-  "author": "",
-  "license": "MIT"
+  }
 }
